@@ -1,0 +1,819 @@
+---
+title: "CR1_dataAnalysis"
+author: "Fares Burwag"
+date: "02/08/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(ggrepel)
+library(ggpubr)
+library(fgsea)        ## Bioconductor Package - special installation instructions
+library(pheatmap)
+# library(ReactomeGSA)  ## Bioconductor Package - special installation instructions
+library(org.Hs.eg.db)
+library(ReactomePA)   ## Bioconductor Package - special installation instructions
+
+```
+
+
+```{r}
+
+polysome_2nmCR1vDMSO <- read_excel("datasets/2nM_CR1vsDMSO_heavymRNA.xlsx", sheet = 1) %>%
+  dplyr::filter(symbol != "NA")
+totalmrna_2nmCR1vDMSO <- read_excel("datasets/2nM_CR1vsDMSO_totalmRNA.xlsx", sheet = 1) %>%
+  dplyr::filter(symbol != "NA")
+proteins_2nmCR1vDMSO <- read_excel("datasets/2nM_CR1vsDMSO_proteins.xlsx", sheet = 1) %>%
+  dplyr::filter(symbol != "NA") %>%
+  dplyr::rename(padj = adj.P.Val, log2FoldChange = logFC)
+
+polysome_4nmCR1vDMSO <- read_excel("datasets/4nM_CR1vsDMSO_heavymRNA.xlsx", sheet = 1) %>%
+  dplyr::filter(symbol != "NA")
+totalmrna_4nmCR1vDMSO <- read_excel("datasets/4nM_CR1vsDMSO_totalmRNA.xlsx", sheet = 1) %>%
+  dplyr::filter(symbol != "NA")
+proteins_4nmCR1vDMSO <- read_excel("datasets/4nM_CR1vsDMSO_proteins.xlsx", sheet = 1) %>%
+  dplyr::filter(symbol != "NA") %>%
+  dplyr::rename(padj = adj.P.Val, log2FoldChange = logFC)
+
+polysome_8nmCR1vDMSO <- read_excel("datasets/8nM_CR1vsDMSO_heavymRNA.xlsx", sheet = 1) %>%
+  dplyr::filter(symbol != "NA")
+totalmrna_8nmCR1vDMSO <- read_excel("datasets/8nM_CR1vsDMSO_totalmRNA.xlsx", sheet = 1) %>%
+  dplyr::filter(symbol != "NA")
+proteins_8nmCR1vDMSO <- read_excel("datasets/8nM_CR1vsDMSO_proteins.xlsx", sheet = 1) %>%
+  dplyr::filter(symbol != "NA") %>%
+  dplyr::rename(padj = adj.P.Val, log2FoldChange = logFC)
+
+```
+
+
+
+
+```{r}
+
+combinedData_2nm <- merge(polysome_2nmCR1vDMSO, totalmrna_2nmCR1vDMSO, all = T, by = "symbol", suffixes = c("_polysome", "_totalmrna"),no.dups = T) %>%
+  merge(proteins_2nmCR1vDMSO, all = T, no.dups = T, by = "symbol") %>%
+  dplyr::rename(log2FoldChange_protein = log2FoldChange, padj_protein = padj) %>%
+  dplyr::select(-sca.adj.pval)
+
+combinedData_4nm <- merge(polysome_4nmCR1vDMSO, totalmrna_4nmCR1vDMSO, all = T, by = "symbol", suffixes = c("_polysome", "_totalmrna"),no.dups = T) %>%
+  merge(proteins_4nmCR1vDMSO, all = T, no.dups = T, by = "symbol") %>%
+  dplyr::rename(log2FoldChange_protein = log2FoldChange, padj_protein = padj) %>%
+  dplyr::select(-sca.adj.pval)
+
+combinedData_8nm <- merge(polysome_8nmCR1vDMSO, totalmrna_8nmCR1vDMSO, all = T, by = "symbol", suffixes = c("_polysome", "_totalmrna"),no.dups = T) %>%
+  merge(proteins_8nmCR1vDMSO, all = T, no.dups = T, by = "symbol") %>%
+  dplyr::rename(log2FoldChange_protein = log2FoldChange, padj_protein = padj) %>%
+  dplyr::select(-sca.adj.pval)
+
+
+```
+
+
+
+
+```{r 2nm totalmRNAvPolysome}
+
+## Parameters for visualization
+# Adjusted p-value cutoff for polysome mRNA filtering
+temp_polysome_pValCutoff <- 0.01
+# Graph will annotate top X genes (and lowest X genes)
+top_x_genes = 10
+# Value for horizontal lines
+log2FC_lineIntercept = 1.5 # log2FC of 1.5 represents a ~2.8 fold change in polysome mRNA (CR1-DMSO)
+
+### Plotting totalmRNA log2FC against polysome log2FC
+temp_data <- combinedData_2nm %>% 
+  filter(across(c("padj_polysome"), function(x) x <= temp_polysome_pValCutoff)) # Filter for significant polysome log2FC 
+
+### Getting correlation coefficient (Pearson's) and corresponding p-value
+r_temp <- round(cor.test(temp_data$log2FoldChange_polysome, temp_data$log2FoldChange_totalmrna)$estimate[[1]], 2)
+p_temp <- round(cor.test(temp_data$log2FoldChange_polysome, temp_data$log2FoldChange_totalmrna)$p.val[[1]],2)
+
+### Isolating top 10 most overexpressed polysome mRNA at 2nM (vs. DMSO)
+polysomeUpHits_temp <- temp_data %>%
+  arrange(desc(log2FoldChange_polysome)) %>%
+  head(top_x_genes)
+
+### Isolating 10 of the most downregulated polysome mRNA at 2nM (vs. DMSO)
+polysomeDownHits_temp <- temp_data %>%
+  arrange(desc(log2FoldChange_polysome)) %>%
+  tail(top_x_genes)
+
+### Non-significant hits due to low log2FC (appear as gray)
+gray_hits <- temp_data %>%
+  filter(abs(log2FoldChange_polysome) < log2FC_lineIntercept)
+
+## Significant hits based on log2FC
+black_hits <- temp_data %>%
+  anti_join(gray_hits, by = "symbol")
+
+ggplot(black_hits, aes(x = log2FoldChange_totalmrna, y = log2FoldChange_polysome))+
+  geom_point()+
+  geom_point(data = polysomeUpHits_temp, color = "#D30000")+
+  geom_point(data = polysomeDownHits_temp, color = "#4169e1")+
+  geom_point(data = gray_hits, color = "#bbbbbb", alpha = 0.1)+
+  geom_hline(yintercept = +log2FC_lineIntercept, color = "gray")+
+  geom_hline(yintercept = -log2FC_lineIntercept, color = "gray")+
+  geom_smooth(method = "lm",se = F)+
+  annotate(geom = "label", x = 2, y = -1.5, label = paste0("Pearson's r = ",r_temp, "\n", "p-value = ", p_temp), hjust = 0)+
+  geom_text_repel(data = polysomeUpHits_temp, aes(
+      segment.square  = TRUE,
+      segment.inflect = TRUE,
+      label = symbol
+    ),
+    force = 2,
+    nudge_y = 3,
+    segment.size = 0.15,
+    min.segment.length = 1.5,
+    size = 2.5,
+    max.overlaps = Inf)+
+  geom_text_repel(data = polysomeDownHits_temp, aes(
+      segment.square  = TRUE,
+      segment.inflect = TRUE,
+      label = symbol
+    ),
+    force = 2,
+    nudge_y = -3,
+    segment.size = 0.15,
+    min.segment.length = 1.5,
+    size = 2.5,
+    max.overlaps = Inf)+
+  labs(x = "Total mRNA LOG2FC\n(2nMCR1-DMSO)", y = "Polysome fraction mRNA LOG2FC\n(2nMCR1-DMSO)",
+       title = "2nM CR1 Treatment (Total mRNA to Polysome mRNA)")+
+  theme_classic()+
+  theme(plot.title = element_text(size = 15, hjust = 0.5))
+
+ggsave("CR1_2nMpolysomemRNA_to_totalmRNA.png", width = 8, height = 6)
+
+```
+
+
+
+```{r 2nm protein v polysome}
+
+## Parameters for visualization
+# Adjusted p-value cutoff for protein filtering
+temp_protein_pValCutoff <- 0.05
+# Graph will annotate top X genes (and lowest X genes) by protein log2FC
+top_x_genes = 10
+# Value for horizontal lines
+log2FC_lineIntercept = 1 # log2FC of 1.5 represents a ~2.8 fold change in protein (CR1-DMSO)
+
+### Plotting protein log2FC against polysome log2FC
+temp_data <- combinedData_2nm %>% 
+  filter(across(c("padj_protein"), function(x) x <= temp_protein_pValCutoff)) # Filter for significant protein log2FC 
+
+### Getting correlation coefficient (Pearson's) and corresponding p-value
+r_temp <- round(cor.test(temp_data$log2FoldChange_protein, temp_data$log2FoldChange_polysome)$estimate[[1]], 2)
+p_temp <- round(cor.test(temp_data$log2FoldChange_protein, temp_data$log2FoldChange_polysome)$p.val[[1]],2)
+
+### Isolating top 10 most overexpressed proteins at 2nM CR1 (vs. DMSO)
+proteinUpHits_temp <- temp_data %>%
+  arrange(desc(log2FoldChange_protein)) %>%
+  head(top_x_genes)
+
+### Isolating 10 of the most downregulated proteins at 2nM (vs. DMSO)
+proteinDownHits_temp <- temp_data %>%
+  arrange(desc(log2FoldChange_protein)) %>%
+  tail(top_x_genes)
+
+### Non-significant hits due to low log2FC (appear as gray)
+gray_hits <- temp_data %>%
+  filter(abs(log2FoldChange_protein) < log2FC_lineIntercept)
+
+## Significant hits based on log2FC
+black_hits <- temp_data %>%
+  anti_join(gray_hits, by = "symbol")
+
+ggplot(black_hits, aes(x = log2FoldChange_polysome, y = log2FoldChange_protein))+
+  geom_point()+
+  geom_point(data = proteinUpHits_temp, color = "#D30000")+
+  geom_point(data = proteinDownHits_temp, color = "#4169e1")+
+  geom_point(data = gray_hits, color = "#bbbbbb", alpha = 0.1)+
+  geom_hline(yintercept = +log2FC_lineIntercept, color = "gray")+
+  geom_hline(yintercept = -log2FC_lineIntercept, color = "gray")+
+  geom_smooth(method = "lm",se = F)+
+  annotate(geom = "label", x = 2, y = -3.5, label = paste0("Pearson's r = ",r_temp, "\n", "p-value = ", p_temp), hjust = 0)+
+  geom_text_repel(data = proteinUpHits_temp, aes(
+      segment.square  = TRUE,
+      segment.inflect = TRUE,
+      label = symbol
+    ),
+    force = 2,
+    nudge_y = 3,
+    segment.size = 0.15,
+    min.segment.length = 1.5,
+    size = 2.5,
+    max.overlaps = Inf)+
+  geom_text_repel(data = proteinDownHits_temp, aes(
+      segment.square  = TRUE,
+      segment.inflect = TRUE,
+      label = symbol
+    ),
+    force = 2,
+    nudge_y = -3,
+    segment.size = 0.15,
+    min.segment.length = 1.5,
+    size = 2.5,
+    max.overlaps = Inf)+
+  labs(x = "Polysome fraction mRNA LOG2FC\n(2nMCR1-DMSO)", y = "Protein LOG2FC\n(2nMCR1-DMSO)",
+       title = "2nM CR1 Treatment (Protein to Polysome mRNA)")+
+  theme_classic()+
+  theme(plot.title = element_text(size = 15, hjust = 0.5))
+
+ggsave("CR1_2nMprotein_to_polysomemRNA.png", width = 8, height = 6)
+
+```
+
+
+
+
+```{r 4nm totalmRNAvPolysome}
+
+## Parameters for visualization
+# Adjusted p-value cutoff for polysome mRNA filtering
+temp_polysome_pValCutoff <- 0.01
+# Graph will annotate top X genes (and lowest X genes)
+top_x_genes = 10
+# Value for horizontal lines
+log2FC_lineIntercept = 1.5 # log2FC of 1.5 represents a ~2.8 fold change in polysome mRNA (CR1-DMSO)
+
+### Plotting totalmRNA log2FC against polysome log2FC
+temp_data <- combinedData_4nm %>% 
+  filter(across(c("padj_polysome"), function(x) x <= temp_polysome_pValCutoff)) # Filter for significant polysome log2FC 
+
+### Getting correlation coefficient (Pearson's) and corresponding p-value
+r_temp <- round(cor.test(temp_data$log2FoldChange_polysome, temp_data$log2FoldChange_totalmrna)$estimate[[1]], 2)
+p_temp <- round(cor.test(temp_data$log2FoldChange_polysome, temp_data$log2FoldChange_totalmrna)$p.val[[1]],2)
+
+### Isolating top 10 most overexpressed polysome mRNA at 4nM (vs. DMSO)
+polysomeUpHits_temp <- temp_data %>%
+  arrange(desc(log2FoldChange_polysome)) %>%
+  head(top_x_genes)
+
+### Isolating 10 of the most downregulated polysome mRNA at 4nM (vs. DMSO)
+polysomeDownHits_temp <- temp_data %>%
+  arrange(desc(log2FoldChange_polysome)) %>%
+  tail(top_x_genes)
+
+### Non-significant hits due to low log2FC (appear as gray)
+gray_hits <- temp_data %>%
+  filter(abs(log2FoldChange_polysome) < log2FC_lineIntercept)
+
+## Significant hits based on log2FC
+black_hits <- temp_data %>%
+  anti_join(gray_hits, by = "symbol")
+
+ggplot(black_hits, aes(x = log2FoldChange_totalmrna, y = log2FoldChange_polysome))+
+  geom_point()+
+  geom_point(data = polysomeUpHits_temp, color = "#D30000")+
+  geom_point(data = polysomeDownHits_temp, color = "#4169e1")+
+  geom_point(data = gray_hits, color = "#bbbbbb", alpha = 0.1)+
+  geom_hline(yintercept = +log2FC_lineIntercept, color = "gray")+
+  geom_hline(yintercept = -log2FC_lineIntercept, color = "gray")+
+  geom_smooth(method = "lm",se = F)+
+  annotate(geom = "label", x = 5, y = -7, label = paste0("Pearson's r = ",r_temp, "\n", "p-value = ", p_temp), hjust = 0)+
+  geom_text_repel(data = polysomeUpHits_temp, aes(
+      segment.square  = TRUE,
+      segment.inflect = TRUE,
+      label = symbol
+    ),
+    force = 2,
+    nudge_y = 3,
+    segment.size = 0.15,
+    min.segment.length = 1.5,
+    size = 2.5,
+    max.overlaps = Inf)+
+  geom_text_repel(data = polysomeDownHits_temp, aes(
+      segment.square  = TRUE,
+      segment.inflect = TRUE,
+      label = symbol
+    ),
+    force = 2,
+    nudge_y = -3,
+    segment.size = 0.15,
+    min.segment.length = 1.5,
+    size = 2.5,
+    max.overlaps = Inf)+
+  labs(x = "Total mRNA LOG2FC\n(4nMCR1-DMSO)", y = "Polysome fraction mRNA LOG2FC\n(4nMCR1-DMSO)",
+       title = "4nM CR1 Treatment (Total mRNA to Polysome mRNA)")+
+  theme_classic()+
+  theme(plot.title = element_text(size = 15, hjust = 0.5))+
+  coord_cartesian(ylim = c(-15,40), xlim = c(-11, 13))
+
+ggsave("CR1_4nMpolysomemRNA_to_totalmRNA.png", width = 8, height = 6)
+
+
+```
+
+
+
+```{r 4nm protein v polysome}
+
+## Parameters for visualization
+# Adjusted p-value cutoff for protein filtering
+temp_protein_pValCutoff <- 0.05
+# Graph will annotate top X genes (and lowest X genes) by protein log2FC
+top_x_genes = 10
+# Value for horizontal lines
+log2FC_lineIntercept = 1 # log2FC of 1.5 represents a ~2.8 fold change in protein (CR1-DMSO)
+
+### Plotting protein log2FC against polysome log2FC
+temp_data <- combinedData_4nm %>% 
+  filter(across(c("padj_protein"), function(x) x <= temp_protein_pValCutoff)) # Filter for significant protein log2FC 
+
+### Getting correlation coefficient (Pearson's) and corresponding p-value
+r_temp <- round(cor.test(temp_data$log2FoldChange_protein, temp_data$log2FoldChange_polysome)$estimate[[1]], 2)
+p_temp <- round(cor.test(temp_data$log2FoldChange_protein, temp_data$log2FoldChange_polysome)$p.val[[1]],2)
+
+### Isolating top 10 most overexpressed proteins at 4nM CR1 (vs. DMSO)
+proteinUpHits_temp <- temp_data %>%
+  arrange(desc(log2FoldChange_protein)) %>%
+  head(top_x_genes)
+
+### Isolating 10 of the most downregulated proteins at 4nM (vs. DMSO)
+proteinDownHits_temp <- temp_data %>%
+  arrange(desc(log2FoldChange_protein)) %>%
+  tail(top_x_genes)
+
+### Non-significant hits due to low log2FC (appear as gray)
+gray_hits <- temp_data %>%
+  filter(abs(log2FoldChange_protein) < log2FC_lineIntercept)
+
+## Significant hits based on log2FC
+black_hits <- temp_data %>%
+  anti_join(gray_hits, by = "symbol")
+
+ggplot(black_hits, aes(x = log2FoldChange_polysome, y = log2FoldChange_protein))+
+  geom_point()+
+  geom_point(data = proteinUpHits_temp, color = "#D30000")+
+  geom_point(data = proteinDownHits_temp, color = "#4169e1")+
+  geom_point(data = gray_hits, color = "#bbbbbb", alpha = 0.1)+
+  geom_hline(yintercept = +log2FC_lineIntercept, color = "gray")+
+  geom_hline(yintercept = -log2FC_lineIntercept, color = "gray")+
+  geom_smooth(method = "lm",se = F)+
+  annotate(geom = "label", x = 2.5, y = -3.5, label = paste0("Pearson's r = ",r_temp, "\n", "p-value = ", p_temp), hjust = 0)+
+  geom_text_repel(data = proteinUpHits_temp, aes(
+      segment.square  = TRUE,
+      segment.inflect = TRUE,
+      label = symbol
+    ),
+    force = 2,
+    nudge_y = 3,
+    segment.size = 0.15,
+    min.segment.length = 1.5,
+    size = 2.5,
+    max.overlaps = Inf)+
+  geom_text_repel(data = proteinDownHits_temp, aes(
+      segment.square  = TRUE,
+      segment.inflect = TRUE,
+      label = symbol
+    ),
+    force = 2,
+    nudge_y = -3,
+    segment.size = 0.15,
+    min.segment.length = 1.5,
+    size = 2.5,
+    max.overlaps = Inf)+
+  labs(x = "Polysome fraction mRNA LOG2FC\n(4nMCR1-DMSO)", y = "Protein LOG2FC\n(4nMCR1-DMSO)",
+       title = "4nM CR1 Treatment (Protein to Polysome mRNA)")+
+  theme_classic()+
+  theme(plot.title = element_text(size = 15, hjust = 0.5))
+
+ggsave("CR1_4nMprotein_to_polysomemRNA.png", width = 8, height = 6)
+
+
+```
+
+
+
+
+
+```{r 8nm totalmRNAvPolysome}
+
+
+## Parameters for visualization
+# Adjusted p-value cutoff for polysome mRNA filtering
+temp_polysome_pValCutoff <- 0.01
+# Graph will annotate top X genes (and lowest X genes)
+top_x_genes = 10
+# Value for horizontal lines
+log2FC_lineIntercept = 1.5 # log2FC of 1.5 represents a ~2.8 fold change in polysome mRNA (CR1-DMSO)
+
+### Plotting totalmRNA log2FC against polysome log2FC
+temp_data <- combinedData_8nm %>% 
+  filter(across(c("padj_polysome"), function(x) x <= temp_polysome_pValCutoff)) # Filter for significant polysome log2FC 
+
+### Getting correlation coefficient (Pearson's) and corresponding p-value
+r_temp <- round(cor.test(temp_data$log2FoldChange_polysome, temp_data$log2FoldChange_totalmrna)$estimate[[1]], 2)
+p_temp <- round(cor.test(temp_data$log2FoldChange_polysome, temp_data$log2FoldChange_totalmrna)$p.val[[1]],2)
+
+### Isolating top 10 most overexpressed polysome mRNA at 8nM (vs. DMSO)
+polysomeUpHits_temp <- temp_data %>%
+  arrange(desc(log2FoldChange_polysome)) %>%
+  head(top_x_genes)
+
+### Isolating 10 of the most downregulated polysome mRNA at 8nM (vs. DMSO)
+polysomeDownHits_temp <- temp_data %>%
+  arrange(desc(log2FoldChange_polysome)) %>%
+  tail(top_x_genes)
+
+### Non-significant hits due to low log2FC (appear as gray)
+gray_hits <- temp_data %>%
+  filter(abs(log2FoldChange_polysome) < log2FC_lineIntercept)
+
+## Significant hits based on log2FC
+black_hits <- temp_data %>%
+  anti_join(gray_hits, by = "symbol")
+
+ggplot(black_hits, aes(x = log2FoldChange_totalmrna, y = log2FoldChange_polysome))+
+  geom_point()+
+  geom_point(data = polysomeUpHits_temp, color = "#D30000")+
+  geom_point(data = polysomeDownHits_temp, color = "#4169e1")+
+  geom_point(data = gray_hits, color = "#bbbbbb", alpha = 0.1)+
+  geom_hline(yintercept = +log2FC_lineIntercept, color = "gray")+
+  geom_hline(yintercept = -log2FC_lineIntercept, color = "gray")+
+  geom_smooth(method = "lm",se = F)+
+  annotate(geom = "label", x = 5, y = -7, label = paste0("Pearson's r = ",r_temp, "\n", "p-value = ", p_temp), hjust = 0)+
+  geom_text_repel(data = polysomeUpHits_temp, aes(
+      segment.square  = TRUE,
+      segment.inflect = TRUE,
+      label = symbol
+    ),
+    force = 2,
+    nudge_y = 6,
+    segment.size = 0.15,
+    min.segment.length = 1,
+    size = 2.5,
+    max.overlaps = Inf)+
+  geom_text_repel(data = polysomeDownHits_temp, aes(
+      segment.square  = TRUE,
+      segment.inflect = TRUE,
+      label = symbol
+    ),
+    force = 2,
+    nudge_y = -6,
+    segment.size = 0.15,
+    min.segment.length = 1,
+    size = 2.5,
+    max.overlaps = Inf)+
+  labs(x = "Total mRNA LOG2FC\n(8nMCR1-DMSO)", y = "Polysome fraction mRNA LOG2FC\n(8nMCR1-DMSO)",
+       title = "8nM CR1 Treatment (Total mRNA to Polysome mRNA)")+
+  theme_classic()+
+  theme(plot.title = element_text(size = 15, hjust = 0.5))+
+  coord_cartesian(ylim = c(-20,40), xlim = c(-11, 13))
+
+ggsave("CR1_8nMpolysomemRNA_to_totalmRNA.png", width = 8, height = 6)
+
+
+```
+
+
+
+```{r 8nm protein v polysome}
+
+
+## Parameters for visualization
+# Adjusted p-value cutoff for protein filtering
+temp_protein_pValCutoff <- 0.05
+# Graph will annotate top X genes (and lowest X genes) by protein log2FC
+top_x_genes = 10
+# Value for horizontal lines
+log2FC_lineIntercept = 1 # log2FC of 1.5 represents a ~2.8 fold change in protein (CR1-DMSO)
+
+### Plotting protein log2FC against polysome log2FC
+temp_data <- combinedData_8nm %>% 
+  filter(across(c("padj_protein"), function(x) x <= temp_protein_pValCutoff)) # Filter for significant protein log2FC 
+
+### Getting correlation coefficient (Pearson's) and corresponding p-value
+r_temp <- round(cor.test(temp_data$log2FoldChange_protein, temp_data$log2FoldChange_polysome)$estimate[[1]], 2)
+p_temp <- round(cor.test(temp_data$log2FoldChange_protein, temp_data$log2FoldChange_polysome)$p.val[[1]],2)
+
+### Isolating top 10 most overexpressed proteins at 8nM CR1 (vs. DMSO)
+proteinUpHits_temp <- temp_data %>%
+  arrange(desc(log2FoldChange_protein)) %>%
+  head(top_x_genes)
+
+### Isolating 10 of the most downregulated proteins at 8nM (vs. DMSO)
+proteinDownHits_temp <- temp_data %>%
+  arrange(desc(log2FoldChange_protein)) %>%
+  tail(top_x_genes)
+
+### Non-significant hits due to low log2FC (appear as gray)
+gray_hits <- temp_data %>%
+  filter(abs(log2FoldChange_protein) < log2FC_lineIntercept)
+
+## Significant hits based on log2FC
+black_hits <- temp_data %>%
+  anti_join(gray_hits, by = "symbol")
+
+ggplot(black_hits, aes(x = log2FoldChange_polysome, y = log2FoldChange_protein))+
+  geom_point()+
+  geom_point(data = proteinUpHits_temp, color = "#D30000")+
+  geom_point(data = proteinDownHits_temp, color = "#4169e1")+
+  geom_point(data = gray_hits, color = "#bbbbbb", alpha = 0.1)+
+  geom_hline(yintercept = +log2FC_lineIntercept, color = "gray")+
+  geom_hline(yintercept = -log2FC_lineIntercept, color = "gray")+
+  geom_smooth(method = "lm",se = F)+
+  annotate(geom = "label", x = 4, y = -3.5, label = paste0("Pearson's r = ",r_temp, "\n", "p-value = ", p_temp), hjust = 0)+
+  geom_text_repel(data = proteinUpHits_temp, aes(
+      segment.square  = TRUE,
+      segment.inflect = TRUE,
+      label = symbol
+    ),
+    force = 2,
+    nudge_y = 3,
+    segment.size = 0.15,
+    min.segment.length = 1.5,
+    size = 2.5,
+    max.overlaps = Inf)+
+  geom_text_repel(data = proteinDownHits_temp, aes(
+      segment.square  = TRUE,
+      segment.inflect = TRUE,
+      label = symbol
+    ),
+    force = 2,
+    nudge_y = -3,
+    segment.size = 0.15,
+    min.segment.length = 1.5,
+    size = 2.5,
+    max.overlaps = Inf)+
+  labs(x = "Polysome fraction mRNA LOG2FC\n(8nMCR1-DMSO)", y = "Protein LOG2FC\n(8nMCR1-DMSO)",
+       title = "8nM CR1 Treatment (Protein to Polysome mRNA)")+
+  theme_classic()+
+  theme(plot.title = element_text(size = 15, hjust = 0.5))
+
+ggsave("CR1_8nMprotein_to_polysomemRNA.png", width = 8, height = 6)
+
+
+```
+
+
+
+
+```{r}
+
+combinedData_2nm["CR1_dose_nm"] <- 2
+combinedData_4nm["CR1_dose_nm"] <- 4
+combinedData_8nm["CR1_dose_nm"] <- 8
+
+combined_allData <- bind_rows(combinedData_2nm, combinedData_4nm, combinedData_8nm) %>%
+  mutate(CR1_dose_nm = as.factor(CR1_dose_nm))
+
+```
+
+
+```{r}
+
+## Violin plots for differet doses of CR-1. Significance was controlled at the protein level.
+
+temp_table <- combined_allData %>%
+  filter(padj_protein <= 0.05)
+ggplot(temp_table, aes(x = CR1_dose_nm, y = log2FoldChange_polysome, fill = CR1_dose_nm))+
+  geom_violin(fill = "gray")+
+  geom_boxplot(width = 0.1, fill = "white", color = "red",outlier.shape = NA)
+
+temp_table <- combined_allData %>%
+  filter(padj_protein <= 0.05)
+ggplot(temp_table, aes(x = CR1_dose_nm, y = log2FoldChange_protein, fill = CR1_dose_nm))+
+  geom_violin(fill = "gray")+
+  geom_boxplot(width = 0.1, fill = "white", color = "red",outlier.shape = NA)
+
+temp_table <- combined_allData %>%
+  filter(padj_protein <= 0.05)
+ggplot(temp_table, aes(x = CR1_dose_nm, y = log2FoldChange_totalmrna, fill = CR1_dose_nm))+
+  geom_violin(fill = "gray")+
+  geom_boxplot(width = 0.1, fill = "white", color = "red",outlier.shape = NA)
+
+```
+
+```{r Looking into drug sensitive targets}
+
+## It might be worth determining whether there are proteins downregulated/upregulated due to 
+## less/more mRNA + less/more polysomes vs less/more mRNA + no change in polysomes vs
+## no change in mRNA + less/more polysomes
+
+## To simplify this question, lets first identify drug-sensitive downregulated proteins.
+## I'm defining these as proteins that meet the following criteria:
+## Show a significant decrease in expression at both 2nm and 8nm (p-adj < 0.01, log2FC < 0)
+## Show a dose-dependent effect where log2FC(2nM) > log2FC(4nM) > log2FC(8nM)
+
+CR1_sensitiveTargets_down <- combined_allData %>%
+  filter(if_all(c("log2FoldChange_protein","padj_protein"), function(x) !is.na(x))) %>%
+  group_by(CR1_dose_nm, symbol) %>%    # Eliminate duplicate genes (ideally I'd have accession numbers)
+  dplyr::slice(1) %>%
+  dplyr::select(symbol, log2FoldChange_protein, padj_protein, CR1_dose_nm) %>%
+  # Create a 'wider' dataset where there is a column for each dose
+  pivot_wider(names_from = CR1_dose_nm, values_from = c("log2FoldChange_protein", "padj_protein")) %>%
+  # Applying the criteria above (log2FC is negative, change is significant for at least one dose)
+  dplyr::filter(if_all(c("log2FoldChange_protein_2", "log2FoldChange_protein_8"), function(x) x<-1),
+         if_any(c("padj_protein_2", "padj_protein_8"), function(x) x<0.01)) %>%
+  # Filtering for genes where effect increases with dose
+  dplyr::filter(log2FoldChange_protein_2 >= log2FoldChange_protein_4,
+         log2FoldChange_protein_4 >= log2FoldChange_protein_8)
+
+## Filter the original combined dataset for genes that met the above criteria
+CR1_sensitiveTargetsdown_data <- combined_allData %>%
+  dplyr::filter(symbol %in% CR1_sensitiveTargets_down$symbol)
+
+## Create a scatter plot of polysome-totalmRNA for the genes that showed a 
+## dose-dependent response at the protein level
+ggplot(CR1_sensitiveTargetsdown_data, aes(x = log2FoldChange_polysome, y = log2FoldChange_totalmrna))+
+  geom_point(alpha = 0.5)+
+  facet_grid(.~CR1_dose_nm)+
+  stat_ellipse(color = "gray")
+
+ggsave("CR1Sensitive_polysometoTotalmRNA.png")
+
+## Statistical tests included below are ANOVA across 3 concentrations (p-value in corner) and pairwise
+## of each group relative to the reference of 2nM CR1.
+ggboxplot(CR1_sensitiveTargetsdown_data, x = "CR1_dose_nm", y = "log2FoldChange_polysome",
+          add = "jitter", add.params = list(alpha = 0.25))+
+  stat_compare_means(method = "anova", label.y = 4.8)+        # Add global anova p-value
+  stat_compare_means(label = "p.signif", method = "t.test",
+                     ref.group = "2") 
+ggsave("CR1Sensitive_polysomeBoxPlot.png")
+
+ggboxplot(CR1_sensitiveTargetsdown_data, x = "CR1_dose_nm", y = "log2FoldChange_totalmrna",
+          add = "jitter", add.params = list(alpha = 0.25))+
+  stat_compare_means(method = "anova", label.y = 4.8)+        # Add global anova p-value
+  stat_compare_means(label = "p.signif", method = "t.test",
+                     ref.group = "2")
+ggsave("CR1Sensitive_TotalmRNABoxPlot.png")
+
+```
+
+
+
+```{r HALLMARK GSEA}
+
+### Read in the .gmt file that contains the hallmark genesets
+hallmark_gmt <- fgsea::gmtPathways("h.all.v2023.1.Hs.symbols.gmt")
+#If you want to look at what proteins are in a particular geneset, simply type
+# hallmark_gmt$(pathway name). Ex. hallmark_gmt$HALLMARK_HYPOXIA.
+
+# Create a blank dataframe to collect the identified pathways in the loop below
+enrichment_data <- data.frame(pathway = c(),pval = c(),padj = c(),log2err = c(),ES = c(),NES = c(),size = c(),leadingEdge = c())
+
+# This loop just cycles across the doses and runs GSEA for that particular dose,
+# it then stores the output in enrichment_data
+for (singleDose in c(2, 4, 8)){
+loop_gseaData <- combined_allData %>%
+  filter(CR1_dose_nm == singleDose, padj_protein <= 0.01) %>%        #Filter for protein log2FC less/equal to 0.05
+  mutate(rankScore = log2FoldChange_protein * -log10(padj_protein))  #Calculate scoring metric (product of -log10(padj) and the log2 fold change)
+
+  # The next two lines are just formatting the data into what fgsea function uses as its input.
+  loop_gseaDataScores <- loop_gseaData$rankScore
+  names(loop_gseaDataScores) <- loop_gseaData$symbol
+  # Run gene set enrichment (does not need pre-sorted data)
+  loop_gseaOutput <- as.data.frame(fgsea::fgsea(hallmark_gmt, loop_gseaDataScores))
+  # Add an additional column called 'CR1_dose' - this lets us track which loop/dose the data came from
+  loop_gseaOutput["CR1_dose"] <- singleDose
+  # Bind the loop output to the original enrichment_data
+  enrichment_data <- rbind(enrichment_data, loop_gseaOutput)
+}
+
+# Reformat dataframe so each dose has its own column for an adjusted p-value and net enrichment score
+enrichmentResWide <- enrichment_data %>%
+  pivot_wider(id_cols = pathway, names_from = "CR1_dose", values_from = c("padj", "NES")) 
+
+# Filter for pathways where AT LEAST ONE of the CR1 doses achieved a significance of 5%
+enrichmentResWideSubset <- enrichmentResWide %>%
+  filter(if_any(contains("padj"), function(x) x <= 0.05))
+
+# Next two lines are just reformating the data for heatmap generation
+enrichmentHeatmap_data <- as.data.frame(enrichmentResWideSubset[,grepl("NES", colnames(enrichmentResWideSubset))])
+row.names(enrichmentHeatmap_data) <- enrichmentResWideSubset$pathway
+colnames(enrichmentHeatmap_data) <- c("2nmCR1", "4nmCR1", "8nmCR1")
+
+# Pheatmap is used to create the actual heatmap. Look at documentation to better
+# understand how you can modify the heatmap (ex. changing color gradients, turning
+# off clustering, annotating, etc...)
+
+hallmarks_heatmap <- pheatmap(enrichmentHeatmap_data)
+ggsave("hallmarks_heatmap.png", hallmarks_heatmap, height = 5, width = 7.5)
+
+## Brief summary:
+# Negative scores indicate that at that dose, CR1 resulted in decreased pathway activity.
+# Positive scores indicate that at that dose, CR1 increased pathway activity
+# Gray indicates that the data for that particular dose does not exist for that pathway (ex.2nm dose for MYC targets)
+# Not all doses may have produced a significant pathway. I would strongly recommend adding
+# an additional layer to this visual that shows which pathways/doses are significant in each
+# pathway (look at enrichmentResWideSubset).
+
+# Based on the output, pathways with a dose-dependent response include ROS, TNFa,
+# myogenesis, EMT, angiogenesis, and potentially MYC response targets.
+
+```
+
+
+
+```{r Reactome geneset enrichment analysis}
+
+entrezGeneMap <- as.list(org.Hs.egSYMBOL2EG[mappedkeys(org.Hs.egSYMBOL2EG)])
+
+# Create a blank dataframe to collect the identified pathways in the loop below
+reactomeEnrichment_data <- data.frame(ID = c(),Description = c(),setSize = c(),enrichmentScore = c(),NES = c(),pvalue = c(),p.adjust = c(),qvalue = c(),rank = c(),leading_edge = c(),core_enrichment = c())
+
+# This loop just cycles across the doses and runs GSEA for that particular dose,
+# it then stores the output in enrichment_data
+for (singleDose in c(2, 4, 8)){
+  gseReactomeLoop_data <- combined_allData[combined_allData$CR1_dose_nm == singleDose,c("symbol", "log2FoldChange_protein","padj_protein")] %>%
+    na.omit() %>%
+    filter(padj_protein <= 0.05)
+    # The next two lines are just formatting the data into what fgsea function uses as its input.
+    gseReactomeLoop_data <- gseReactomeLoop_data[!duplicated(gseReactomeLoop_data$symbol),]
+    gseReactomeLoop_data['entrezID'] <- as.numeric(as.character(entrezGeneMap[gseReactomeLoop_data$symbol])) %>% unlist(use.names = FALSE)
+    # Run gene set enrichment (requires pre-sorted data)
+    loop_gseScores <- gseReactomeLoop_data$log2FoldChange_protein * -log10(gseReactomeLoop_data$padj_protein)
+    names(loop_gseScores) <- gseReactomeLoop_data$entrezID
+    loop_gseScores <- loop_gseScores[!is.na(names(loop_gseScores))]
+    loop_gseScores_sorted <- loop_gseScores %>% sort(decreasing = T)
+    loopReactomePathway_output <- as.data.frame(gsePathway(loop_gseScores_sorted, pvalueCutoff = 1))    # Add an additional column called 'CR1_dose' - this lets us track which loop/dose the data came from
+    loopReactomePathway_output["CR1_dose"] <- singleDose
+    # Bind the loop output to the original enrichment_data
+    reactomeEnrichment_data <- rbind(reactomeEnrichment_data, loopReactomePathway_output)
+}
+
+# Reformat dataframe so each dose has its own column for an adjusted p-value and net enrichment score
+reactomeEnrichmentResWide <- reactomeEnrichment_data %>%
+  pivot_wider(id_cols = Description, names_from = "CR1_dose", values_from = c("p.adjust", "NES")) 
+
+# Filter for pathways where AT LEAST ONE of the CR1 doses achieved a significance of 5%
+reactomeEnrichmentResWideSubset <- reactomeEnrichmentResWide %>%
+  filter(if_any(contains("p.adjust"), function(x) x <= 0.05))
+
+# Next two lines are just reformating the data for heatmap generation
+reactomeEnrichmentHeatmap_data <- as.data.frame(reactomeEnrichmentResWideSubset[,grepl("NES", colnames(reactomeEnrichmentResWideSubset))])
+row.names(reactomeEnrichmentHeatmap_data) <- reactomeEnrichmentResWideSubset$Description
+colnames(reactomeEnrichmentHeatmap_data) <- c("2nmCR1", "4nmCR1", "8nmCR1")
+
+# Pheatmap is used to create the actual heatmap. Look at documentation to better
+# understand how you can modify the heatmap (ex. changing color gradients, turning
+# off clustering, annotating, etc...)
+
+reactomeHMAP <- pheatmap(as.matrix(reactomeEnrichmentHeatmap_data), cluster_cols = F, cluster_rows = F)
+ggsave(reactomeHMAP, filename = "heatmap.png",width = 10, height = 15)
+
+
+```
+
+```{r Reactome translation visualization}
+
+gseReactome2nm_data <- combined_allData[combined_allData$CR1_dose_nm == 2,c("symbol", "log2FoldChange_protein","padj_protein")] %>%
+na.omit() %>%
+filter(padj_protein <= 0.05)
+
+# The next two lines are just formatting the data into what fgsea function uses as its input.
+gseReactome2nm_data <- gseReactome2nm_data[!duplicated(gseReactome2nm_data$symbol),]
+gseReactome2nm_data['entrezID'] <- as.numeric(as.character(entrezGeneMap[gseReactome2nm_data$symbol])) %>% unlist(use.names = FALSE)
+# Run gene set enrichment (requires pre-sorted data)
+gseScores2nm <- gseReactome2nm_data$log2FoldChange_protein
+names(gseScores2nm) <- gseReactome2nm_data$entrezID
+gseScores2nm <- gseScores2nm[!is.na(names(gseScores2nm))]
+gseScores2nm_sorted <- gseScores2nm %>% sort()
+
+
+
+gseReactome4nm_data <- combined_allData[combined_allData$CR1_dose_nm == 4,c("symbol", "log2FoldChange_protein","padj_protein")] %>%
+na.omit() %>%
+filter(padj_protein <= 0.05)
+
+# The next two lines are just formatting the data into what fgsea function uses as its input.
+gseReactome4nm_data <- gseReactome4nm_data[!duplicated(gseReactome4nm_data$symbol),]
+gseReactome4nm_data['entrezID'] <- as.numeric(as.character(entrezGeneMap[gseReactome4nm_data$symbol])) %>% unlist(use.names = FALSE)
+# Run gene set enrichment (requires pre-sorted data)
+gseScores4nm <- gseReactome4nm_data$log2FoldChange_protein
+names(gseScores4nm) <- gseReactome4nm_data$entrezID
+gseScores4nm <- gseScores4nm[!is.na(names(gseScores4nm))]
+gseScores4nm_sorted <- gseScores4nm %>% sort()
+
+
+
+gseReactome8nm_data <- combined_allData[combined_allData$CR1_dose_nm == 8,c("symbol", "log2FoldChange_protein","padj_protein")] %>%
+na.omit() %>%
+filter(padj_protein <= 0.05)
+
+# The next two lines are just formatting the data into what fgsea function uses as its input.
+gseReactome8nm_data <- gseReactome8nm_data[!duplicated(gseReactome8nm_data$symbol),]
+gseReactome8nm_data['entrezID'] <- as.numeric(as.character(entrezGeneMap[gseReactome8nm_data$symbol])) %>% unlist(use.names = FALSE)
+# Run gene set enrichment (requires pre-sorted data)
+gseScores8nm <- gseReactome8nm_data$log2FoldChange_protein
+names(gseScores8nm) <- gseReactome8nm_data$entrezID
+gseScores8nm <- gseScores8nm[!is.na(names(gseScores8nm))]
+gseScores8nm_sorted <- gseScores8nm %>% sort()
+
+
+translationReactome2nm_network <- viewPathway("Translation",foldChange = gseScores2nm_sorted, readable = T)
+translationReactome4nm_network <- viewPathway("Translation",foldChange = gseScores4nm_sorted, readable = T)
+translationReactome8nm_network <- viewPathway("Translation",foldChange = gseScores8nm_sorted, readable = T)
+
+ggsave("translationReactome2nm_network.png", plot = translationReactome2nm_network, width = 10, height = 10)
+ggsave("translationReactome4nm_network.png", plot = translationReactome4nm_network, width = 10, height = 10)
+ggsave("translationReactome8nm_network.png", plot = translationReactome8nm_network, width = 10, height = 10)
+
+```
+
